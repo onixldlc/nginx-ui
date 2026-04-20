@@ -6,20 +6,14 @@ RUN --mount=type=cache,target=/var/cache/apk \
     apk update && apk upgrade --update
 
 RUN corepack enable pnpm \
- && corepack prepare pnpm@10.7.1 --activate
+ && corepack prepare pnpm@10.33.0 --activate
 
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile \
  && pnpm run build
 
 
-
-
-
-
- 
-
-FROM golang:1.24-alpine3.21 AS backend-builder
+FROM golang:1.26-alpine3.21 AS backend-builder
 WORKDIR /nginx-ui
 COPY . /nginx-ui
 COPY --from=frontend-builder /app/dist /nginx-ui/app/dist
@@ -31,12 +25,35 @@ RUN apk add --no-cache git gcc g++ make
 
 ENV CGO_ENABLED=1
 
-RUN go generate
+RUN mkdir -p /build
+RUN go generate ./...
 RUN go build \
-    -work -tags=jsoniter \
-    -ldflags "$LD_FLAGS -X 'github.com/0xJacky/Nginx-UI/settings.buildTime=0'" \
+    -tags=jsoniter \
+    -ldflags "-X 'github.com/0xJacky/Nginx-UI/settings.buildTime=0'" \
     -o /build/nginx-ui -v main.go
 
 
-FROM alpine:3.21
-COPY --from=backend-builder /build/nginx-ui /bin/nginx-ui
+FROM nginx:alpine3.21 AS runner
+COPY --from=backend-builder /build/nginx-ui /usr/local/bin/nginx-ui
+COPY ./nginx_ui-entrypoint.sh /nginx_ui-entrypoint.sh
+
+COPY resources/docker/nginx.conf /usr/local/etc/nginx/nginx.conf
+COPY resources/docker/nginx-ui.conf /usr/local/etc/nginx/conf.d/nginx-ui.conf
+
+RUN chmod +x /nginx_ui-entrypoint.sh
+
+RUN mkdir -p /etc/nginx/sites-enabled \
+             /etc/nginx/sites-available \
+             /etc/nginx/streams-enabled \
+             /etc/nginx/streams-available
+
+RUN cp -r /etc/nginx/ /etc/nginx-default/
+
+RUN rm -f /var/log/nginx/access.log && \
+    touch /var/log/nginx/access.log && \
+    rm -f /var/log/nginx/error.log && \
+    touch /var/log/nginx/error.log
+
+WORKDIR /etc/nginx-ui
+
+ENTRYPOINT ["/nginx_ui-entrypoint.sh"]
