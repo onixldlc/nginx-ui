@@ -1,30 +1,42 @@
-FROM uozi/nginx-ui-base:latest
-ARG TARGETOS
-ARG TARGETARCH
-ARG TARGETVARIANT
-EXPOSE 80 443
+FROM node:23-alpine3.21 AS frontend-builder
+WORKDIR /app
+COPY ./app /app
 
-ENV NGINX_UI_OFFICIAL_DOCKER=true
-ENV NGINX_UI_WORKING_DIR=/var/run/
+RUN --mount=type=cache,target=/var/cache/apk \
+    apk update && apk upgrade --update
 
-# register nginx-ui service
-COPY resources/docker/nginx-ui.run /etc/s6-overlay/s6-rc.d/nginx-ui/run
-RUN echo 'longrun' > /etc/s6-overlay/s6-rc.d/nginx-ui/type && \
-    touch /etc/s6-overlay/s6-rc.d/user/contents.d/nginx-ui
+RUN corepack enable pnpm \
+ && corepack prepare pnpm@10.7.1 --activate
 
-# copy nginx config
-COPY resources/docker/nginx.conf /usr/local/etc/nginx/nginx.conf
-COPY resources/docker/nginx-ui.conf /usr/local/etc/nginx/conf.d/nginx-ui.conf
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile \
+ && pnpm run build
 
-# copy nginx-ui executable binary
-COPY nginx-ui-$TARGETOS-$TARGETARCH$TARGETVARIANT/nginx-ui /usr/local/bin/nginx-ui
 
-# remove default nginx config
-RUN rm -f /etc/nginx/conf.d/default.conf  \
-    && rm -f /usr/local/etc/nginx/conf.d/default.conf
 
-# recreate access.log and error.log
-RUN rm -f /var/log/nginx/access.log && \
-    touch /var/log/nginx/access.log && \
-    rm -f /var/log/nginx/error.log && \
-    touch /var/log/nginx/error.log
+
+
+
+ 
+
+FROM golang:1.24-alpine3.21 AS backend-builder
+WORKDIR /nginx-ui
+COPY . /nginx-ui
+COPY --from=frontend-builder /app/dist /nginx-ui/app/dist
+
+RUN --mount=type=cache,target=/var/cache/apk \
+    apk update && apk upgrade --update
+
+RUN apk add --no-cache git gcc g++ make
+
+ENV CGO_ENABLED=1
+
+RUN go generate
+RUN go build \
+    -work -tags=jsoniter \
+    -ldflags "$LD_FLAGS -X 'github.com/0xJacky/Nginx-UI/settings.buildTime=0'" \
+    -o /build/nginx-ui -v main.go
+
+
+FROM alpine:3.21
+COPY --from=backend-builder /build/nginx-ui /bin/nginx-ui
