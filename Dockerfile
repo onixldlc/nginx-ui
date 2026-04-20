@@ -1,4 +1,4 @@
-FROM node:23-alpine3.21 AS frontend-builder
+FROM node:23-alpine3.22 AS frontend-builder
 WORKDIR /app
 COPY ./app /app
 
@@ -13,7 +13,7 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
  && pnpm run build
 
 
-FROM golang:1.26-alpine3.21 AS backend-builder
+FROM golang:1.26-alpine3.22 AS backend-builder
 WORKDIR /nginx-ui
 COPY . /nginx-ui
 COPY --from=frontend-builder /app/dist /nginx-ui/app/dist
@@ -33,7 +33,7 @@ RUN go build \
     -o /build/nginx-ui -v main.go
 
 
-FROM nginx:alpine3.21 AS runner
+FROM nginx:alpine3.22 AS runner
 COPY --from=backend-builder /build/nginx-ui /usr/local/bin/nginx-ui
 COPY ./nginx_ui-entrypoint.sh /nginx_ui-entrypoint.sh
 
